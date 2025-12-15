@@ -1,0 +1,70 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch: [release, okjack]   # 你可以写多个分支名
+    name: Build ${{ matrix.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Release Apk Sign
+        run: |
+          signingConfigs='ICAgIHNpZ25pbmdDb25maWdzIHtcCiAgICAgICAgaWYgKHByb2plY3QuaGFzUHJvcGVydHkoIlJFTEVBU0VfU1RPUkVfRklMRSIpKSB7XAogICAgICAgICAgICBteUNvbmZpZyB7XAogICAgICAgICAgICAgICAgc3RvcmVGaWxlIGZpbGUoUkVMRUFTRV9TVE9SRV9GSUxFKVwKICAgICAgICAgICAgICAgIHN0b3JlUGFzc3dvcmQgUkVMRUFTRV9TVE9SRV9QQVNTV09SRFwKICAgICAgICAgICAgICAgIGtleUFsaWFzIFJFTEVBU0VfS0VZX0FMSUFTXAogICAgICAgICAgICAgICAga2V5UGFzc3dvcmQgUkVMRUFTRV9LRVlfUEFTU1dPUkRcCiAgICAgICAgICAgICAgICB2MVNpZ25pbmdFbmFibGVkIHRydWVcCiAgICAgICAgICAgICAgICB2MlNpZ25pbmdFbmFibGVkIHRydWVcCiAgICAgICAgICAgICAgICBlbmFibGVWM1NpZ25pbmcgPSB0cnVlXAogICAgICAgICAgICAgICAgZW5hYmxlVjRTaWduaW5nID0gdHJ1ZVwKICAgICAgICAgICAgfVwKICAgICAgICB9XAogICAgfVwKXA=='
+          signingConfig='ICAgICAgICAgICAgaWYgKHByb2plY3QuaGFzUHJvcGVydHkoIlJFTEVBU0VfU1RPUkVfRklMRSIpKSB7XAogICAgICAgICAgICAgICAgc2lnbmluZ0NvbmZpZyBzaWduaW5nQ29uZmlncy5teUNvbmZpZ1wKICAgICAgICAgICAgfVwK'
+          signingConfigs="$(echo "$signingConfigs" |base64 -d )"
+          signingConfig="$(echo "$signingConfig" |base64 -d )"
+          sed -i -e "/defaultConfig {/i\\$signingConfigs " -e "/debug {/a\\$signingConfig " -e "/release {/a\\$signingConfig " app/build.gradle
+          cp -f ${{ github.workspace }}/.github/workflows/TVBoxOS.jks app/TVBoxOS.jks
+          sed -i '$a\RELEASE_STORE_FILE=./TVBoxOS.jks'     ./gradle.properties
+          sed -i '$a\RELEASE_KEY_ALIAS=TVBOX'              ./gradle.properties
+          sed -i '$a\RELEASE_STORE_PASSWORD=TVBoxOS'       ./gradle.properties
+          sed -i '$a\RELEASE_KEY_PASSWORD=TVBoxOS'         ./gradle.properties
+      - name: Manually Install Python 3.8
+        run: |
+          sudo add-apt-repository ppa:deadsnakes/ppa -y
+          sudo apt update
+          sudo apt install -y python3.8 python3.8-venv python3.8-dev
+          sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+      - name: Check Python Version
+        run: python3 --version
+      - name: Clean Gradle & Python Cache
+        run: |
+          rm -rf ~/.gradle/caches/
+          rm -rf ~/.gradle/wrapper/
+          rm -rf ~/.cache/pip/
+          python3 -m pip cache purge
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
+      - name: Find Version Name
+        run: |
+          VerName=$(grep "versionName" ./app/build.gradle |cut -d\' -f2)
+          echo "version=$VerName" >> $GITHUB_ENV
+      - name: Find last commit date
+        run: |
+          date=$(git log --date=format:'%Y%m%d-%H%M' --pretty=format:%cd -1)
+          echo "$date"
+          echo "tag=$date" >> $GITHUB_ENV
+      - name: Build With Gradle
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleLeanbackArmeabi_v7aRelease assembleMobileArm64_v8aRelease --build-cache --parallel --daemon --warning-mode all
+      - name: Prepare App
+        run: |
+          mkdir -p ${{ github.workspace }}/apk/
+          find ./app/build/outputs/apk -name "*.apk" | while read file; do
+            fname=$(basename "$file")
+            cp "$file" "${{ github.workspace }}/apk/${fname%.*}_${{ matrix.branch }}_${{ env.tag }}_${{ env.version }}.apk"
+          done
+      - name: Upload App To Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: com.fongmi.android.${{ matrix.branch }}
+          path: ${{ github.workspace }}/apk/*
