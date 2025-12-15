@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        branch: [release, okjack]   # 你可以写多个分支名
+        branch: [release]   # 你可以写多个分支名
     name: Build ${{ matrix.branch }}
     steps:
       - uses: actions/checkout@v4
